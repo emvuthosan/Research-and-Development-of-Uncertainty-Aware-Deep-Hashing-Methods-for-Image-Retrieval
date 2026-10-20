@@ -194,3 +194,44 @@ To test our model with ``Center-Target'' construction on ImageNet after trai, us
 ```
 python CSQ_HashUQ.py --grad_est cf --no-pairwise --no-tqdm --dataset imagenet --KL_regularization 1 --val --rt_st hamuct --sample_method MCD --sample 100 --no-train
 ```
+
+## Tuần 3–4: ProbHash và ablation
+
+Cả hai ELBO đã có trong code: closed-form cho Center-Target (`CSQ_HashUQ.py --grad_est cf`) và ước lượng Monte Carlo + straight-through cho Label-Target (`GreedyHash_HashUQ.py --grad_est st`). Theo paper (Phụ lục B.1.2), λ = 1 cho mọi mô hình, nên luôn truyền `--KL_regularization 1` (mặc định trong code là 0), trừ dòng ablation λ = 0.
+
+Các lần chạy (mặc định ImageNet, 16 bit, chọn checkpoint theo validation, eval nhanh với 1 forward pass):
+
+| Job | Lệnh | Paper (ImageNet 16 bit) |
+|---|---|---|
+| `smoke` | CSQ closed-form, 10 epoch, chỉ để kiểm tra pipeline | — |
+| `A` | `CSQ_HashUQ.py --grad_est cf --KL_regularization 1` | 0.604 (Bảng 2) / 0.606 (Bảng 1) |
+| `B` | `CSQ_HashUQ.py --grad_est st --KL_regularization 1` | 0.592 (Bảng 2) |
+| `C` | `CSQ_HashUQ.py --grad_est st --KL_regularization 0` | 0.573 (Bảng 2) |
+| `D` | `GreedyHash_HashUQ.py --grad_est st --KL_regularization 1` | 0.595 (Bảng 1) |
+| `eval100` | Đánh giá lại checkpoint tốt nhất của A và D với 100 mẫu MC Dropout, không train lại | |
+| `report` | `summarize_results.py` + `plot_curves.py` → `results/` | |
+
+```
+bash scripts/week34.sh smoke          # Linux / Colab
+bash scripts/week34.sh A              # mỗi GPU một job
+DATASET=nuswide_21 BIT="16 32 64" bash scripts/week34.sh A
+.\scripts\week34.ps1 smoke            # Windows PowerShell
+```
+
+Các tham số chung: `--val --rt_st ham --sample 1 --epoch 100`. `--test_map N` (mặc định 10) là chu kỳ đánh giá; `--epoch` phải ≥ `--test_map`.
+
+Mỗi run folder trong `saved_model/` có:
+
+- `epoch_log.csv`: loss và KL trung bình mỗi epoch (ghi lại sau mỗi epoch, nên run bị ngắt giữa chừng vẫn còn dữ liệu)
+- `map.csv`: mAP ở mỗi lần đánh giá (ghi lại sau mỗi lần đánh giá, nên `--no-train` dùng được cả khi train bị ngắt)
+- `train_loss.csv`, `val_loss.csv`, `results_epoch_*.json`, `results_final.json`, và thư mục mã hash `.npy`
+
+Script phụ:
+
+- `plot_curves.py`: vẽ loss, KL và mAP theo epoch, mỗi construction một hàng (`python plot_curves.py saved_model --filter dataset_imagenet --out results/curves.png`)
+- `summarize_results.py`: gom mọi run thành một bảng cạnh số của paper (`python summarize_results.py saved_model --out results/summary`)
+- `eval_codes.py`: tính mAP@topK, P@H≤2 và HashUQ/HashUQ-Bin (nếu có `trn_uct.npy`) từ các file `.npy` đã lưu, chỉ cần numpy. Dùng chung cho run của nhóm và baseline gốc: `python eval_codes.py saved_model/` hoặc `python eval_codes.py ../baseline/save/CSQ --name CSQ-baseline --out results/eval.csv`, rồi `python summarize_results.py --extra results/eval.csv`
+
+Baseline gốc của DeepHash-pytorch chỉ lưu mã hash khi config có `save_path`: thêm `"save_path": "save/CSQ"` (hoặc `"save/GreedyHash"`) vào `get_config()` của `CSQ.py` / `GreedyHash.py` bên baseline trước khi chạy.
+
+`*.csv`, `*.json` và `saved_model/` đang bị `.gitignore` bỏ qua, nên kết quả cần được chia sẻ qua Drive (copy cả run folder hoặc `results/`).

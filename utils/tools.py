@@ -437,11 +437,14 @@ def compute_result(dataloader, net, config, device, uct = False):
             # print(map_prob.shape, least_prob.shape)
             # tstat, pvalue =  scipy.stats.ttest_rel(np.prod(map_prob, axis = 2), np.prod(least_prob, axis = 2), axis = 0)
             if config["sample"] > 1:
-                tstat, pvalue =  scipy.stats.ttest_rel(prob_samples.numpy(), (1 - prob_samples.numpy()), axis = 0)
+                # float64: with float32 input, newer scipy returns float32 p-values, eps=1e-100 rounds to 0,
+                # log(0) = -inf and the normalized uncertainty becomes NaN (confident items then rank last)
+                prob_samples_64 = prob_samples.double().numpy()
+                tstat, pvalue =  scipy.stats.ttest_rel(prob_samples_64, (1 - prob_samples_64), axis = 0)
                 # tstat2, pvalue2 =  scipy.stats.ttest_rel(np.prod(map_prob, axis = 2), np.prod(sec_prob, axis = 2), axis = 0)
                 prob_var = torch.mean(torch.var(prob_samples, dim = 0), dim = 1)
             else:
-                pvalue = torch.zeros((entropy_samples[0].shape[0],1))
+                pvalue = torch.zeros((entropy_samples[0].shape[0],1), dtype = torch.float64)
                 prob_var = torch.zeros((entropy_samples[0].shape[0]))
             # print(pvalue.shape)
             prob_avg = torch.mean(prob_samples, dim = 0)

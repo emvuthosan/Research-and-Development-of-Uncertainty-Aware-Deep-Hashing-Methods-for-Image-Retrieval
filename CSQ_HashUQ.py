@@ -60,6 +60,7 @@ def get_args():
     parser.add_argument('--net', dest = 'net_name', type = str, default = "alexnet", help = "alexnet, resnet18, resnet34, resnet50, ...")
     parser.add_argument('--bit', dest = 'bit_list', type = int, nargs = '+', default = [16], help = "e.g. --bit 16 32 64")
     parser.add_argument('--epoch', type = int, default = 100)
+    parser.add_argument('--test_map', type = int, default = 10, help = "Evaluate (and save a checkpoint) every N epochs; --epoch must be >= N")
     parser.add_argument('--num_workers', type = int, default = 4)
     parser.add_argument('--val', action='store_true')
     parser.add_argument('--no-val', dest='val', action='store_false')
@@ -267,6 +268,7 @@ def train_val(config, bit):
     map_list = []
     kl_list = []
     pw_list = []
+    epoch_log = []
 
     torch.set_printoptions(sci_mode = True)
 
@@ -300,6 +302,7 @@ def train_val(config, bit):
             net.train()
 
             train_loss = 0
+            kl_sum = 0
             for image, label, ind in train_loader:
                 image = image.to(device)
                 label = label.to(device)
@@ -315,6 +318,7 @@ def train_val(config, bit):
                 KL = torch.sum((prob*torch.log(torch.div(prob, config["prior"]) + eps) + (1 - prob)*torch.log(torch.div(1- prob, 1 - config["prior"]) + eps)))/(config['batch_size']*bit)
                 KL_loss = config["KL_regularization"]*KL
                 train_loss += loss.item()
+                kl_sum += KL.item()
 
                 if config["grad_est"] in ['st', 'gs', 'cf', 'cf2']:
                     loss.backward(retain_graph = True)
@@ -329,6 +333,10 @@ def train_val(config, bit):
             train_loss = train_loss / len(train_loader)
 
             print("\b\b\b\b\b\b\b loss:%.3f" % (train_loss))
+
+            # per-epoch log (rewritten every epoch so an interrupted Colab run still keeps its curve)
+            epoch_log.append({"epoch": epoch + 1, "train_loss": train_loss, "kl": kl_sum / len(train_loader)})
+            pd.DataFrame(epoch_log).to_csv(os.path.join(save_path, "epoch_log.csv"), index = False)
 
             if (epoch + 1) % config["test_map"] == 0:
                 if config["val"] == True:
@@ -367,8 +375,13 @@ def train_val(config, bit):
                 val_loss_list.append(val_loss)
                 map_list.append(mAP)
                 kl_list.append(KL.item())
+                # written at every evaluation so --no-train can pick the best checkpoint even after a crash
+                pd.DataFrame(map_list).to_csv(os.path.join(save_path, "map.csv"))
     else:
         map_list = pd.read_csv(os.path.join(save_path, "map.csv"))["0"]
+
+    if len(map_list) == 0:
+        raise SystemExit("No evaluation was run: --epoch (%d) must be >= --test_map (%d)" % (config["epoch"], config["test_map"]))
 
     #Training Done    
     Best_Epoch = (np.argmax(map_list) + 1)*config["test_map"]
